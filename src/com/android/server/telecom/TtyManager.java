@@ -16,6 +16,9 @@
 
 package com.android.server.telecom;
 
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -35,12 +38,17 @@ final class TtyManager implements WiredHeadsetManager.Listener {
     private final WiredHeadsetManager mWiredHeadsetManager;
     private int mPreferredTtyMode = TelecomManager.TTY_MODE_OFF;
     private int mCurrentTtyMode = TelecomManager.TTY_MODE_OFF;
+    protected NotificationManager mNotificationManager;
+
+    static final int HEADSET_PLUGIN_NOTIFICATION = 1000;
 
     TtyManager(Context context, WiredHeadsetManager wiredHeadsetManager) {
         mContext = context;
         mWiredHeadsetManager = wiredHeadsetManager;
         mWiredHeadsetManager.addListener(this);
 
+        mNotificationManager =
+                (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
         mPreferredTtyMode = Settings.Secure.getInt(
                 mContext.getContentResolver(),
                 Settings.Secure.PREFERRED_TTY_MODE,
@@ -55,7 +63,6 @@ final class TtyManager implements WiredHeadsetManager.Listener {
 
     boolean isTtySupported() {
         boolean isEnabled = mContext.getResources().getBoolean(R.bool.tty_enabled);
-        Log.v(this, "isTtySupported: %b", isEnabled);
         return isEnabled;
     }
 
@@ -65,8 +72,13 @@ final class TtyManager implements WiredHeadsetManager.Listener {
 
     @Override
     public void onWiredHeadsetPluggedInChanged(boolean oldIsPluggedIn, boolean newIsPluggedIn) {
-        Log.v(this, "onWiredHeadsetPluggedInChanged");
-        updateCurrentTtyMode();
+
+        if (Settings.System.getInt(mContext.getContentResolver(),
+                Settings.System.HEADSET_PLUGGED_IN, 0) == 1) {
+            showHeadSetPlugin();
+        } else {
+            cancelHeadSetPlugin();
+        }
     }
 
     private void updateCurrentTtyMode() {
@@ -74,7 +86,6 @@ final class TtyManager implements WiredHeadsetManager.Listener {
         if (isTtySupported() && mWiredHeadsetManager.isPluggedIn()) {
             newTtyMode = mPreferredTtyMode;
         }
-        Log.v(this, "updateCurrentTtyMode, %d -> %d", mCurrentTtyMode, newTtyMode);
 
         if (mCurrentTtyMode != newTtyMode) {
             mCurrentTtyMode = newTtyMode;
@@ -103,17 +114,39 @@ final class TtyManager implements WiredHeadsetManager.Listener {
                 audioTtyMode = "tty_off";
                 break;
         }
-        Log.v(this, "updateAudioTtyMode, %s", audioTtyMode);
 
         AudioManager audioManager = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
         audioManager.setParameters("tty_mode=" + audioTtyMode);
+    }
+
+    void showHeadSetPlugin() {
+
+        String titleText = mContext.getString(
+                R.string.headset_plugin_view_title);
+        String expandedText = mContext.getString(
+                R.string.headset_plugin_view_text);
+
+        Notification notification = new Notification();
+        notification.icon = android.R.drawable.stat_sys_headset;
+        notification.tickerText = titleText;
+
+        // create the target network operators settings intent
+        Intent intent = new Intent("android.intent.action.NO_ACTION");
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        PendingIntent pi = PendingIntent.getActivity(mContext, 0, intent, 0);
+
+        notification.setLatestEventInfo(mContext, titleText, expandedText, pi);
+        mNotificationManager.notify(HEADSET_PLUGIN_NOTIFICATION, notification);
+    }
+
+    void cancelHeadSetPlugin() {
+        mNotificationManager.cancel(HEADSET_PLUGIN_NOTIFICATION);
     }
 
     private final class TtyBroadcastReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            Log.v(TtyManager.this, "onReceive, action: %s", action);
             if (action.equals(TelecomManager.ACTION_TTY_PREFERRED_MODE_CHANGED)) {
                 int newPreferredTtyMode = intent.getIntExtra(
                         TelecomManager.EXTRA_TTY_PREFERRED_MODE, TelecomManager.TTY_MODE_OFF);
